@@ -1,0 +1,237 @@
+---
+title: "mandala work book"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(ggplot2); library(dplyr); library(deldir); library(jpeg)
+```
+
+
+```{r pointsfunc}
+mandalaPoints <- function(iter=3, # Number of iterations (depth)
+                    points=6, # Number of points
+                    radius=3.8){ # Factor of expansion/compression
+  
+  # Angles of points from center
+  angles=seq(0, 2*pi*(1-1/points), length.out = points)+pi/2
+  
+  # Initial center
+  df=data.frame(x=0, y=0)
+  
+  # Iterate over centers again and again
+  for (k in 1:iter){
+    temp=data.frame()
+    for (i in 1:nrow(df)){
+      data.frame(x=df[i,"x"]+radius^(k-1)*cos(angles), 
+                 y=df[i,"y"]+radius^(k-1)*sin(angles)) %>% rbind(temp) -> temp
+    }
+    df=temp
+  }
+  
+  # Obtain Voronoi regions
+  df %>%
+    select(x,y) %>% 
+    deldir(sort=TRUE) -> data
+  #%>% set aside for now to get the whole list
+  #  .$dirsgs 
+  #-> data
+  
+  return(data)
+}
+```
+
+```{r struct}
+mandalaStruct <- function(iter=3, # Number of iterations (depth)
+                    points=6, # Number of points
+                    radius=3.8){ # Factor of expansion/compression
+  unwrap <- function(lst){
+    x <- lst$x
+    y <- lst$y
+    seg <- data.frame(cbind(x, y)) 
+    seg$grp <- lst$ptNum
+    seg$centx <- lst$pt[1]
+    seg$centy <- lst$pt[2]
+    return(seg)
+  }
+
+  # Angles of points from center
+  angles=seq(0, 2*pi*(1-1/points), length.out = points)+pi/2
+  
+  # Initial center
+  df=data.frame(x=0, y=0)
+  
+  # Iterate over centers again and again
+  for (k in 1:iter){
+    temp=data.frame()
+    for (i in 1:nrow(df)){
+      data.frame(x=df[i,"x"]+radius^(k-1)*cos(angles), 
+                 y=df[i,"y"]+radius^(k-1)*sin(angles)) %>% rbind(temp) -> temp
+    }
+    df=temp
+  }
+  
+  data <- df %>%
+    select(x,y) %>% 
+    deldir(sort=TRUE) %>% # Obtain Voronoi regions
+    tile.list() 
+  mydf <- data
+  #%>% #create a list of polygons
+  #  lapply(unwrap)
+  #mydf<-do.call("rbind", data) #into a data frame
+
+  return(mydf)
+}
+```
+
+```{r savepng}
+savemandalaPNG <- function(iter, points, radius, cm=10){
+  
+  for(i in iter){
+       for(k in radius){
+        print(sprintf("mandala-%03d-%2.1f.png",  i, k, replace=TRUE)) #print the filename to track progress
+        png(filename=sprintf("images/mandala-%03d-%2.1f.png",  i, k, replace=TRUE), #filename - prioritize points
+            bg="transparent", type="cairo-png", units="cm", height=cm, width = cm, res=300)
+        print(mandalaPolyRad(i, points, k))
+        dev.off()
+      }
+      
+  }
+  return(TRUE) 
+}
+```
+
+```{r points}
+ggplot(df, aes(x1, y1)) +
+    scale_x_continuous(expand=c(0,0))+
+    scale_y_continuous(expand=c(0,0))+
+    coord_fixed() +
+   geom_point()
+
+```
+
+```{r virpal}
+#viridis, magma, plasma, magma, inferno
+pal <- sample(viridis::viridis_pal()(100))
+#pal <- paste0('"', paste(mypal$cc, collapse='", "'), '"')
+```
+```{r polymultrad}
+mandalaPolyRad <- function(iter=3, # Number of iterations (depth)
+                    points=c(6,6,6), # Number of points
+                    radius=3.8, # Factor of expansion/compression
+                    palette, # Color palette to use (specific list)
+                    border_poly = FALSE){ # Display border polygons
+  #helper from tile.list to a frame
+  unwrap <- function(lst){
+    x <- lst$x
+    y <- lst$y
+    seg <- data.frame(cbind(x, y)) 
+    seg$grp <- lst$ptNum
+    seg$centx <- lst$pt[1]
+    seg$centy <- lst$pt[2]
+    seg$border <- any(lst$bp)
+    return(seg)
+  }
+  # Initial center
+  df=data.frame(x=0, y=0)
+  # Iterate over centers again and again
+  for (k in 1:iter){
+    angles=seq(0, 2*pi*(1-1/points[k]), length.out = points[k])+pi/2 #Angles of points from center - can vary by iter
+    temp=data.frame()
+    for (i in 1:nrow(df)){
+      data.frame(x=df[i,"x"]+radius^(k-1)*cos(angles), 
+                 y=df[i,"y"]+radius^(k-1)*sin(angles)) %>% rbind(temp) -> temp
+    }
+    df=temp
+  }
+  data <- df %>%
+    select(x,y) %>% 
+    deldir(sort=TRUE) %>% # Obtain Voronoi regions
+    tile.list() %>% #create a list of polygons 
+    lapply(unwrap)
+  mydf<-do.call("rbind", data) %>% #into a data frame
+    mutate(dist = centx^2 + centy^2,
+           ncol= round(dist * 100, digits = 0),
+           col = as.factor(ncol %% length(pal)))
+  if(!border_poly){mydf <- filter(mydf, border == FALSE)} #exclude border polygons based on parameter
+
+  ggplot(mydf, aes(x=x, y=y, group=grp)) +
+    scale_x_continuous(expand=c(0,0))+
+    scale_y_continuous(expand=c(0,0))+
+    coord_fixed() +
+    geom_polygon(aes(fill = col), colour="black", size=0.1) +
+    scale_fill_manual(values = pal) + 
+    #  scale_fill_gradientn(colours = terrain.colors(10)) +
+    #  scale_fill_brewer() + theme_dark() +
+    theme(legend.position  = "none",
+          panel.background = element_rect(fill="white"),
+          panel.border     = element_rect(colour = "black", fill=NA),
+          axis.ticks       = element_blank(),
+          panel.grid       = element_blank(),
+          axis.title       = element_blank(),
+          axis.text        = element_blank()) -> plot
+  return(plot)
+}
+```
+```{r animated6}
+library(magick)
+vpal<-viridis::viridis_pal()(20)
+mandala_save(4,c(3,6,9,12),seq(from=1.8,to=4.2,by=0.3),border_poly = TRUE, path = "trial/",cm=12,res=200,palette = vpal)
+im43<-image_read(paste0("trial/",dir("trial/")))
+ani43<-image_animate(im43,fps = 2.5)
+image_write(ani43,"ani43.gif")
+```
+```{r animated5}
+library(magick)
+vpal<-viridis::viridis_pal()(20)
+my_path <- "trial2/"
+#mandala_save(2:5,5,2,border_poly = FALSE, path = my_path, cm=12,res=200,palette = "white")
+mandala_save(2:5,5,seq(from=1.8,to=3.1,by=0.3),border_poly = FALSE, path = my_path, cm=12,res=200,palette = c("white","white","red"))
+im43<-image_read(paste0(my_path,dir(my_path)))
+ani43<-image_animate(im43, fps = 2)
+image_write(ani43,"ani43.gif")
+```
+
+```{r animated10}
+library(magick)
+vpal<-viridis::viridis_pal()(20)
+cpal<-paste0("#",unname(unlist(colourlovers::clpalette(443995)$colors)))
+
+my_path <- "trial/"
+#mandala_save(2:5,5,2,border_poly = FALSE, path = my_path, cm=12,res=200,palette = "white")
+mandala_save(2:6,10,seq(from=1.8,to=4.5,by=0.3),border_poly = FALSE, path = my_path, cm=12,res=200,palette = cpal)
+im43<-image_read(paste0(my_path,dir(my_path)))
+ani43<-image_animate(im43, fps = 2)
+image_write(ani43,"ani10.gif")
+```
+
+```{r animated17}
+library(magick)
+vpal<-viridis::viridis_pal()(20)
+cpal<-paste0("#",unname(unlist(colourlovers::clpalette(629637)$colors)))
+ypal<-paste0("#",unname(unlist(colourlovers::clpalette(203331)$colors)))
+zpal<-paste0("#",unname(unlist(colourlovers::clpalette(4521696)$colors)))
+
+my_path <- "trial/"
+#mandala_save(2:5,5,2,border_poly = FALSE, path = my_path, cm=12,res=200,palette = "white")
+mandala_save(2:5,7,seq(from=1.8,to=4.5,by=0.3),border_poly = FALSE, path = my_path, cm=12,res=200,palette = cpal)
+im43<-image_read(paste0(my_path,dir(my_path)))
+ani43<-image_animate(im43, fps = 2)
+image_write(ani43,"ani74.gif")
+```
+
+```{r t_mandala_ani}
+mypal <- c("#594F4F","#547980","#45ADA8","#9DE0AD","#E5FCC2")
+my_radius <- c(1.8, 3.8)
+xx <- mandala_ani(iter=3, points=14, radius=my_radius, palette=mypal, border_poly=FALSE, border = "black", 
+                        path="ani", cm=5, res=300, fps = 100/3, remove_previous = TRUE, my_filename = "ani.gif")
+
+```
+
+
+
+
